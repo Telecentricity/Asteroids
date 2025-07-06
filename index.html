@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eyeball Asteroids</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+        
+        canvas {
+            border: 2px solid #333;
+            background: linear-gradient(45deg, #001122, #000033);
+        }
+        
+        .game-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 18px;
+            z-index: 10;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            font-size: 14px;
+            z-index: 10;
+        }
+        
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 24px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-info">
+        <div>Score: <span id="score">0</span></div>
+        <div>Lives: <span id="lives">3</span></div>
+    </div>
+    
+    <div class="controls">
+        <div>Arrow Keys or WASD: Move & Rotate</div>
+        <div>Spacebar: Shoot</div>
+        <div>R: Restart (when game over)</div>
+    </div>
+    
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div id="gameOverScreen" class="game-over" style="display: none;">
+        <h2>Game Over!</h2>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <p>Press R to restart</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        let gameRunning = true;
+        let score = 0;
+        let lives = 3;
+        let keys = {};
+        
+        // Player ship
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            angle: 0,
+            velocity: { x: 0, y: 0 },
+            size: 8,
+            thrustPower: 0.3,
+            rotationSpeed: 0.15,
+            friction: 0.98
+        };
+        
+        // Arrays for game objects
+        let eyeballs = [];
+        let bullets = [];
+        let particles = [];
+        
+        // Eyeball class
+        class Eyeball {
+            constructor(x, y, size) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 2,
+                    y: (Math.random() - 0.5) * 2
+                };
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+                this.pupilOffset = { x: 0, y: 0 };
+            }
+            
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.rotation += this.rotationSpeed;
+                
+                // Wrap around screen
+                if (this.x < -this.size) this.x = canvas.width + this.size;
+                if (this.x > canvas.width + this.size) this.x = -this.size;
+                if (this.y < -this.size) this.y = canvas.height + this.size;
+                if (this.y > canvas.height + this.size) this.y = -this.size;
+                
+                // Make pupil track the player
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                    this.pupilOffset.x = (dx / dist) * (this.size * 0.3);
+                    this.pupilOffset.y = (dy / dist) * (this.size * 0.3);
+                }
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // Draw eyeball (white circle)
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw iris (colored circle)
+                ctx.fillStyle = `hsl(${this.rotation * 180 / Math.PI}, 70%, 50%)`;
+                ctx.beginPath();
+                ctx.arc(this.pupilOffset.x * 0.5, this.pupilOffset.y * 0.5, this.size * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw pupil (black circle)
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(this.pupilOffset.x, this.pupilOffset.y, this.size * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.restore();
+            }
+        }
+        
+        // Bullet class
+        class Bullet {
+            constructor(x, y, angle) {
+                this.x = x;
+                this.y = y;
+                this.velocity = {
+                    x: Math.cos(angle) * 8,
+                    y: Math.sin(angle) * 8
+                };
+                this.life = 60;
+            }
+            
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.life--;
+                
+                // Wrap around screen
+                if (this.x < 0) this.x = canvas.width;
+                if (this.x > canvas.width) this.x = 0;
+                if (this.y < 0) this.y = canvas.height;
+                if (this.y > canvas.height) this.y = 0;
+            }
+            
+            draw() {
+                ctx.fillStyle = '#ff0';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // Particle class for explosions
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 8,
+                    y: (Math.random() - 0.5) * 8
+                };
+                this.life = 30;
+                this.color = `hsl(${Math.random() * 60 + 15}, 100%, 50%)`;
+            }
+            
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.velocity.x *= 0.95;
+                this.velocity.y *= 0.95;
+                this.life--;
+            }
+            
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.life / 30;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        // Initialize eyeballs
+        function createEyeballs() {
+            eyeballs = [];
+            for (let i = 0; i < 6; i++) {
+                let x, y;
+                do {
+                    x = Math.random() * canvas.width;
+                    y = Math.random() * canvas.height;
+                } while (Math.sqrt((x - player.x) ** 2 + (y - player.y) ** 2) < 100);
+                
+                eyeballs.push(new Eyeball(x, y, 30 + Math.random() * 20));
+            }
+        }
+        
+        // Update player
+        function updatePlayer() {
+            if (!gameRunning) return;
+            
+            // Rotation (Arrow keys or WASD)
+            if (keys['ArrowLeft'] || keys['a'] || keys['A']) player.angle -= player.rotationSpeed;
+            if (keys['ArrowRight'] || keys['d'] || keys['D']) player.angle += player.rotationSpeed;
+            
+            // Thrust (Arrow keys or WASD)
+            if (keys['ArrowUp'] || keys['w'] || keys['W']) {
+                player.velocity.x += Math.cos(player.angle) * player.thrustPower;
+                player.velocity.y += Math.sin(player.angle) * player.thrustPower;
+            }
+            
+            // Apply friction
+            player.velocity.x *= player.friction;
+            player.velocity.y *= player.friction;
+            
+            // Update position
+            player.x += player.velocity.x;
+            player.y += player.velocity.y;
+            
+            // Wrap around screen
+            if (player.x < 0) player.x = canvas.width;
+            if (player.x > canvas.width) player.x = 0;
+            if (player.y < 0) player.y = canvas.height;
+            if (player.y > canvas.height) player.y = 0;
+        }
+        
+        // Draw player
+        function drawPlayer() {
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);
+            
+            // Draw ship
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(player.size, 0);
+            ctx.lineTo(-player.size, -player.size / 2);
+            ctx.lineTo(-player.size / 2, 0);
+            ctx.lineTo(-player.size, player.size / 2);
+            ctx.closePath();
+            ctx.stroke();
+            
+            // Draw thrust
+            if (keys['ArrowUp'] || keys['w'] || keys['W']) {
+                ctx.strokeStyle = '#f80';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-player.size, -3);
+                ctx.lineTo(-player.size - 8, 0);
+                ctx.lineTo(-player.size, 3);
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+        }
+        
+        // Collision detection
+        function checkCollisions() {
+            // Bullet-eyeball collisions
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                for (let j = eyeballs.length - 1; j >= 0; j--) {
+                    const bullet = bullets[i];
+                    const eyeball = eyeballs[j];
+                    const dx = bullet.x - eyeball.x;
+                    const dy = bullet.y - eyeball.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < eyeball.size) {
+                        // Create explosion particles
+                        for (let k = 0; k < 8; k++) {
+                            particles.push(new Particle(eyeball.x, eyeball.y));
+                        }
+                        
+                        // Split larger eyeballs
+                        if (eyeball.size > 20) {
+                            for (let k = 0; k < 2; k++) {
+                                const newEyeball = new Eyeball(
+                                    eyeball.x + (Math.random() - 0.5) * 20,
+                                    eyeball.y + (Math.random() - 0.5) * 20,
+                                    eyeball.size * 0.6
+                                );
+                                eyeballs.push(newEyeball);
+                            }
+                        }
+                        
+                        score += Math.floor(eyeball.size);
+                        bullets.splice(i, 1);
+                        eyeballs.splice(j, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // Player-eyeball collisions
+            for (let i = 0; i < eyeballs.length; i++) {
+                const eyeball = eyeballs[i];
+                const dx = player.x - eyeball.x;
+                const dy = player.y - eyeball.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < eyeball.size + player.size) {
+                    lives--;
+                    
+                    // Create explosion particles
+                    for (let k = 0; k < 15; k++) {
+                        particles.push(new Particle(player.x, player.y));
+                    }
+                    
+                    // Reset player position
+                    player.x = canvas.width / 2;
+                    player.y = canvas.height / 2;
+                    player.velocity.x = 0;
+                    player.velocity.y = 0;
+                    
+                    if (lives <= 0) {
+                        gameRunning = false;
+                        document.getElementById('gameOverScreen').style.display = 'block';
+                        document.getElementById('finalScore').textContent = score;
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update game objects
+            updatePlayer();
+            
+            eyeballs.forEach(eyeball => eyeball.update());
+            
+            bullets = bullets.filter(bullet => {
+                bullet.update();
+                return bullet.life > 0;
+            });
+            
+            particles = particles.filter(particle => {
+                particle.update();
+                return particle.life > 0;
+            });
+            
+            // Check collisions
+            checkCollisions();
+            
+            // Draw everything
+            drawPlayer();
+            eyeballs.forEach(eyeball => eyeball.draw());
+            bullets.forEach(bullet => bullet.draw());
+            particles.forEach(particle => particle.draw());
+            
+            // Update UI
+            document.getElementById('score').textContent = score;
+            document.getElementById('lives').textContent = lives;
+            
+            // Spawn new eyeballs if all destroyed
+            if (eyeballs.length === 0) {
+                createEyeballs();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            if (e.key === ' ') {
+                e.preventDefault();
+                if (gameRunning) {
+                    bullets.push(new Bullet(
+                        player.x + Math.cos(player.angle) * player.size,
+                        player.y + Math.sin(player.angle) * player.size,
+                        player.angle
+                    ));
+                }
+            }
+            
+            if (e.key === 'r' || e.key === 'R') {
+                if (!gameRunning) {
+                    // Restart game
+                    gameRunning = true;
+                    score = 0;
+                    lives = 3;
+                    player.x = canvas.width / 2;
+                    player.y = canvas.height / 2;
+                    player.velocity.x = 0;
+                    player.velocity.y = 0;
+                    player.angle = 0;
+                    bullets = [];
+                    particles = [];
+                    createEyeballs();
+                    document.getElementById('gameOverScreen').style.display = 'none';
+                }
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        // Start game
+        createEyeballs();
+        gameLoop();
+    </script>
+</body>
+</html>
